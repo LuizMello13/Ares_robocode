@@ -1,0 +1,327 @@
+package Projeto_facul;
+
+import java.awt.Color;
+
+import robocode.AdvancedRobot;
+import robocode.Condition;
+import robocode.CustomEvent;
+import robocode.HitRobotEvent;
+import robocode.HitWallEvent;
+import robocode.RobotDeathEvent;
+import robocode.Rules;
+import robocode.ScannedRobotEvent;
+import robocode.util.Utils;
+
+/*Alunos: Luiz Henrique, Tiago Felix
+*/
+
+public class Ares extends AdvancedRobot {
+
+	BotInimigo enemy = new BotInimigo();
+	int direction;
+	int muitoProximoParede = 0;
+	int limiteParede = 60;
+	boolean desvia = false;
+	double BF_WIDTH, BF_HEIGHT;
+	RobotPart wheels;
+
+	double tick = 0;
+
+
+	public void run() {
+		BF_HEIGHT = getBattleFieldHeight();
+		BF_WIDTH = getBattleFieldWidth();
+		direction = 1;
+		wheels = new tankWave();
+
+		addCustomEvent(new Condition("atirou") {
+			public boolean test() {
+				if (!enemy.none()) {
+					double energyDiff = enemy.getOldEnergy() - enemy.getEnergy();
+					return energyDiff >= .1 && energyDiff <= 3;
+				}
+				return false;
+			}
+		});
+
+		
+		addCustomEvent(new Condition("parede") {
+			public boolean test() {
+				return (getX() <= limiteParede ||
+					
+						getX() >= BF_WIDTH - limiteParede ||
+						
+						getY() <= limiteParede ||
+						
+						getY() >= BF_HEIGHT - limiteParede);
+			}
+		});
+
+		setAdjustGunForRobotTurn(true);
+		setAdjustRadarForGunTurn(true);
+		setAdjustRadarForRobotTurn(true);
+
+	
+		enemy.reset();
+
+	
+		setTurnRadarRight(360);
+
+		do {
+
+		
+			if (getTime() - tick > 20) {
+				tick = getTime();
+				setTurnRadarRight(360);
+				scan();
+			}
+
+		
+			wheels.init();
+			wheels.move();
+
+			
+			execute();
+		} while (true);
+
+	}
+
+
+	public void onCustomEvent(CustomEvent event) {
+	
+		if (getOthers() <= 3 && (event.getCondition().getName().equals("atirou"))) {
+			setAhead(50 * (-direction));
+			System.out.println(enemy.getName() + " atirou O_O");
+		}
+		
+		if (event.getCondition().getName().equals("parede")) {
+			if (muitoProximoParede <= 0) {
+				muitoProximoParede += limiteParede;
+				setMaxVelocity(0);
+			}
+		}
+	}
+
+
+	static double normalizeBearing(double angle) {
+		while (angle > 180)
+			angle -= 360;
+		while (angle < -180)
+			angle += 360;
+		return angle;
+	}
+
+
+
+	public void onRobotDeath(RobotDeathEvent event) {
+		if (enemy.getName().equals(event.getName())) {
+			System.out.println("MORREU VIADO");
+			enemy.reset();
+			setTurnRadarRight(360);
+		}
+	}
+
+
+
+	public void onScannedRobot(ScannedRobotEvent event) {
+	
+		if (event.getEnergy() == 0) {
+			setTurnGunRightRadians(Utils
+					.normalRelativeAngle(getHeadingRadians() - getGunHeadingRadians() + event.getBearingRadians()));
+			if (getTurnRemainingRadians() <= 5)
+				fire(1);
+		}
+
+		
+		if (enemy.none() || enemy.getName().equals(event.getName()) || enemy.getDistance() > event.getDistance()) {
+		
+			enemy.set(event, this);
+		}
+
+		
+		setTurnRadarRight(Utils.normalRelativeAngleDegrees(getHeading() - getRadarHeading() + enemy.getBearing()));
+
+	
+		setTurnGunRightRadians(enemy.getShootMeHere() * 0.85);
+
+	
+		if (getGunTurnRemainingRadians() <= 1) {
+			setFire(enemy.getFirePower());
+		}
+	}
+
+
+
+	public void onHitRobot(HitRobotEvent event) {
+		System.out.println("AF " + event.getName() + " VAI BATE NOUTRO >.<");
+		setTurnGunRightRadians(getHeadingRadians() - getGunHeadingRadians() + event.getBearingRadians());
+		if (getGunTurnRemainingRadians() < 5)
+			setFire(3);
+	}
+
+
+
+	public void onHitWall(HitWallEvent event) {
+		System.out.println("opa");
+	}
+
+	class tankWave implements RobotPart {
+		
+		public void init() {
+			setColors(Color.black, Color.black, Color.black);
+			setScanColor(Color.black);
+			setBulletColor(Color.white);
+		}
+
+	
+		public void move() {
+		
+			setTurnRight(normalizeBearing(enemy.getBearing() + 90 - (15 * direction)));
+
+		
+			if (muitoProximoParede > 0) {
+				muitoProximoParede--;
+			}
+
+		
+			if (getVelocity() == 0) {
+				setMaxVelocity(8);
+				direction *= -1;
+				setAhead(1000 * direction);
+			}
+
+		}
+
+	}
+}
+
+
+interface RobotPart {
+	public void init();
+
+	public void move();
+}
+
+
+final class BotInimigo {
+	private String name;
+	private double heading, bearing, velocity, energy, headingRadians, bearingRadians, distance;
+
+	double energyOld;
+	double absBearingRadians;
+	double displacement;
+	private double X, Y;
+
+	double firePower;
+	double shootMeHere;
+
+	public BotInimigo() {
+	}
+
+	public BotInimigo(ScannedRobotEvent e, AdvancedRobot r) {
+		set(e, r);
+	}
+
+	public void reset() {
+		this.name = "";
+	}
+
+	public boolean none() {
+		return this.getName().isEmpty();
+	}
+
+
+	private void setEnergy(double energyNew) {
+		this.energyOld = this.energy;
+		this.energy = energyNew;
+	}
+
+	public void set(ScannedRobotEvent e, AdvancedRobot r) {
+		this.name = e.getName();
+		this.heading = e.getHeading();
+		this.headingRadians = e.getHeadingRadians();
+		this.bearing = e.getBearing();
+		this.bearingRadians = e.getBearingRadians();
+		this.velocity = e.getVelocity();
+		setEnergy(e.getEnergy());
+		this.distance = e.getDistance();
+
+		
+		this.absBearingRadians = r.getHeadingRadians() + this.bearingRadians;
+
+	
+		this.firePower = Math.max(r.getBattleFieldHeight(), r.getBattleFieldWidth()) / getDistance();
+
+	
+		this.X = r.getX() + Math.sin(getAbsBearingRadians()) * getDistance();
+		this.Y = r.getY() + Math.cos(getAbsBearingRadians()) * getDistance();
+
+	
+		this.displacement = getVelocity() * Math.sin(getHeadingRadians() - getAbsBearingRadians())
+				/ Rules.getBulletSpeed(getFirePower());
+
+	
+		this.shootMeHere = Utils
+				.normalRelativeAngle(getAbsBearingRadians() - r.getGunHeadingRadians() + getDisplacement());
+	}
+
+	public double getShootMeHere() {
+		return shootMeHere;
+	}
+
+	public double getFirePower() {
+		return firePower;
+	}
+
+	public double getAbsBearingRadians() {
+		return absBearingRadians;
+	}
+
+	public double getDisplacement() {
+		return displacement;
+	}
+
+	public double getX() {
+		return X;
+	}
+
+	public double getY() {
+		return Y;
+	}
+
+	public String getName() {
+		return name;
+	}
+
+	public double getHeading() {
+		return heading;
+	}
+
+	public double getBearing() {
+		return bearing;
+	}
+
+	public double getVelocity() {
+		return velocity;
+	}
+
+	public double getOldEnergy() {
+		return energyOld;
+	}
+
+	public double getEnergy() {
+		return energy;
+	}
+
+	public double getHeadingRadians() {
+		return headingRadians;
+	}
+
+	public double getBearingRadians() {
+		return bearingRadians;
+	}
+
+	public double getDistance() {
+		return distance;
+	}
+}
